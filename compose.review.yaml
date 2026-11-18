@@ -1,0 +1,19 @@
+# Настройки только для стенда, который запускается через tools/dev.sh.
+services:
+  api:
+    environment:
+      KANDINSKY_REVIEW_PASSWORD: ${KANDINSKY_REVIEW_PASSWORD:?Run ./tools/dev.sh}
+      STUDIO_PROVIDER: kandinsky
+      STUDIO_STARTER_HISTORY: "true"
+      STUDIO_MODERATION_MODE: "off"
+      STUDIO_GPU_URL: ${KANDINSKY_REVIEW_GPU_URL:-}
+      STUDIO_GPU_TOKEN: ${KANDINSKY_REVIEW_GPU_TOKEN:-}
+      STUDIO_VIDEO_SR_ENABLED: ${KANDINSKY_REVIEW_VIDEO_SR:-false}
+      STUDIO_PASSWORD_RESET_SECRET: ""
+  worker:
+    environment:
+      STUDIO_PROVIDER: kandinsky
+      STUDIO_MODERATION_MODE: "off"
+      STUDIO_GPU_URL: ${KANDINSKY_REVIEW_GPU_URL:-}
+      STUDIO_GPU_TOKEN: ${KANDINSKY_REVIEW_GPU_TOKEN:-}
+      STUDIO_VIDEO_SR_ENABLED: ${KANDINSKY_REVIEW_VIDEO_SR:-false}

@@ -1,0 +1,166 @@
+# Запускает базу, сервер, службу связи и обработчик заданий вместе.
+# Порядок запуска защищает от запросов к ещё не подготовленной базе.
+
+name: kandinsky-studio
+# Общие настройки образа и папки вложений для служб из одного исходного кода.
+x-app: &app
+  image: ${KANDINSKY_SERVER_IMAGE:-kandinsky-studio-api:local}
+  build: ./backend
+  volumes:
+    - media:/media
+  extra_hosts:
+    - host.docker.internal:host-gateway
+  depends_on:
+    db:
+      condition: service_healthy
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+services:
+  # Хранит записи в отдельном томе, чтобы перезапуск контейнера не стирал историю.
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: studio
+      POSTGRES_USER: studio
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run python3 tools/configure.py}
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      # Во время настройки PostgreSQL уже отвечает через сокет. TCP станет доступен, когда база готова для сервера.
+      test: [CMD, pg_isready, -h, 127.0.0.1, -U, studio, -d, studio]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+  # Создаёт отдельные роли для обновления схемы, запросов и обработки заданий.
+  roles:
+    <<: *app
+    environment:
+      STUDIO_DATABASE_URL: postgresql+psycopg://studio:${POSTGRES_PASSWORD:?}@db:5432/studio
+      STUDIO_MIGRATION_PASSWORD: ${STUDIO_MIGRATION_PASSWORD:?Run python3 tools/configure.py}
+      STUDIO_API_PASSWORD: ${STUDIO_API_PASSWORD:?Run python3 tools/configure.py}
+      STUDIO_WORKER_PASSWORD: ${STUDIO_WORKER_PASSWORD:?Run python3 tools/configure.py}
+    volumes: []
+    command: [python, -m, app.Console.Commands.database_roles, provision]
+    restart: 'no'
+  # Готовит файлы стартовой истории один раз до запуска сервера.
+  history:
+    <<: *app
+    depends_on: {}
+    environment:
+      STUDIO_MEDIA_DIR: /media
+    command: [python, -m, app.Console.Commands.install_history]
+    restart: 'no'
+  # Меняет схему отдельной ролью и затем выдаёт рабочим ролям нужные права.
+  migrate:
+    <<: *app
+    environment:
+      STUDIO_DATABASE_URL: postgresql+psycopg://kandinsky_migrate:${STUDIO_MIGRATION_PASSWORD:?}@db:5432/studio
+    volumes: []
+    depends_on:
+      roles:
+        condition: service_completed_successfully
+    command: [sh, -ec, "alembic upgrade head && python -m app.Console.Commands.database_roles grant"]
+    restart: 'no'
+  # Принимает запросы после подготовки ролей, таблиц и файлов истории.
+  api:
+    <<: *app
+    environment:
+      STUDIO_DATABASE_URL: postgresql+psycopg://kandinsky_api:${STUDIO_API_PASSWORD:?}@db:5432/studio
+      STUDIO_MEDIA_DIR: /media
+      STUDIO_PROVIDER: ${STUDIO_PROVIDER:-kandinsky}
+      STUDIO_GPU_URL: ${STUDIO_GPU_URL:-http://host.docker.internal:8099}
+      STUDIO_GPU_TOKEN: ${STUDIO_GPU_TOKEN:-}
+      STUDIO_VIDEO_SR_ENABLED: ${STUDIO_VIDEO_SR_ENABLED:-false}
+      STUDIO_MODERATION_MODE: ${STUDIO_MODERATION_MODE:-off}
+      STUDIO_MODERATION_ORIGIN: ${STUDIO_MODERATION_ORIGIN:-}
+      STUDIO_MODERATION_TOKEN: ${STUDIO_MODERATION_TOKEN:-}
+      STUDIO_MODERATION_TIMEOUT_SECONDS: ${STUDIO_MODERATION_TIMEOUT_SECONDS:-180}
+      STUDIO_LEASE_SECONDS: ${STUDIO_LEASE_SECONDS:-90}
+      STUDIO_STARTER_HISTORY: ${STUDIO_STARTER_HISTORY:-true}
+      STUDIO_BRIDGE_ERASURE_KEY: ${STUDIO_BRIDGE_ERASURE_KEY:-}
+      STUDIO_PASSWORD_RESET_SECRET: ${STUDIO_PASSWORD_RESET_SECRET:-}
+      STUDIO_SMTP_HOST: ${STUDIO_SMTP_HOST:-}
+      STUDIO_SMTP_PORT: ${STUDIO_SMTP_PORT:-587}
+      STUDIO_SMTP_SECURITY: ${STUDIO_SMTP_SECURITY:-starttls}
+      STUDIO_SMTP_FROM: ${STUDIO_SMTP_FROM:-}
+      STUDIO_SMTP_USER: ${STUDIO_SMTP_USER:-}
+      STUDIO_SMTP_PASSWORD: ${STUDIO_SMTP_PASSWORD:-}
+      STUDIO_SESSION_IDLE_MINUTES: ${STUDIO_SESSION_IDLE_MINUTES:-10080}
+      STUDIO_SESSION_HOURS: ${STUDIO_SESSION_HOURS:-168}
+      STUDIO_MAX_UPLOAD_BYTES: ${STUDIO_MAX_UPLOAD_BYTES:-20971520}
+      STUDIO_CORS_ORIGINS: ${STUDIO_CORS_ORIGINS:-[]}
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      history:
+        condition: service_completed_successfully
+    ports:
+      - 127.0.0.1:8098:8098
+    healthcheck:
+      test: [CMD, curl, -fsS, http://localhost:8098/health]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  # Связывает мобильные приложения с сервером и хранит своё состояние в отдельном томе.
+  bridge:
+    image: ${KANDINSKY_SERVER_IMAGE:-kandinsky-studio-api:local}
+    build: ./backend
+    command:
+      - uvicorn
+      - bootstrap.bridge:from_environment
+      - --factory
+      - --host
+      - 0.0.0.0
+      - --port
+      - '8449'
+      - --ws-max-size
+      - '65536'
+      - --no-access-log
+    environment:
+      KANDINSKY_UPSTREAM: http://api:8098
+      KANDINSKY_BRIDGE_STATE: /state/bridge.sqlite
+      KANDINSKY_BRIDGE_ERASURE_KEY: ${STUDIO_BRIDGE_ERASURE_KEY:-}
+    volumes:
+      - bridge_state:/state
+    ports:
+      - 127.0.0.1:8449:8449
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, curl, -fsS, http://localhost:8449/health]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+  # Забирает задания после готовности сервера. Использует свою роль и общую папку файлов.
+  worker:
+    <<: *app
+    environment:
+      STUDIO_DATABASE_URL: postgresql+psycopg://kandinsky_worker:${STUDIO_WORKER_PASSWORD:?}@db:5432/studio
+      STUDIO_MEDIA_DIR: /media
+      STUDIO_PROVIDER: ${STUDIO_PROVIDER:-kandinsky}
+      STUDIO_GPU_URL: ${STUDIO_GPU_URL:-http://host.docker.internal:8099}
+      STUDIO_GPU_TOKEN: ${STUDIO_GPU_TOKEN:-}
+      STUDIO_VIDEO_SR_ENABLED: ${STUDIO_VIDEO_SR_ENABLED:-false}
+      STUDIO_MODERATION_MODE: ${STUDIO_MODERATION_MODE:-off}
+      STUDIO_MODERATION_ORIGIN: ${STUDIO_MODERATION_ORIGIN:-}
+      STUDIO_MODERATION_TOKEN: ${STUDIO_MODERATION_TOKEN:-}
+      STUDIO_MODERATION_TIMEOUT_SECONDS: ${STUDIO_MODERATION_TIMEOUT_SECONDS:-180}
+      STUDIO_LEASE_SECONDS: ${STUDIO_LEASE_SECONDS:-90}
+    command: [python, -m, app.Jobs.worker]
+    depends_on:
+      api:
+        condition: service_healthy
+# Долговечные папки для базы, состояния службы связи и вложений.
+volumes:
+  bridge_state:
+  database:
+  media:

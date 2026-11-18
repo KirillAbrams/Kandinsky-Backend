@@ -1,0 +1,6 @@
+# Хранит адрес и точную версию исходников модели.
+# По ним можно сверить, какие исходники использованы, и отдельно проверить условия распространения весов.
+
+repository=https://github.com/kandinskylab/kandinsky-5.git
+revision=3a74261b957df0446c1969c5cedf8bbb07969ac2
+license=MIT (code); review each downloaded model license separately

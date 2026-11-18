@@ -1,0 +1,22 @@
+name: Проверки сервера
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg postgresql libpq-dev
+      - run: pg_config --bindir >> "$GITHUB_PATH"
+      - run: pip install -r backend/requirements-dev.lock && pip install --no-deps -e backend
+      - run: ruff check backend tools/modal_gpu.py && ruff format --check backend tools/modal_gpu.py
+      - working-directory: backend
+        run: python -m pytest tests --cov=app --cov=bootstrap --cov=config --cov=routes --cov=database.seeders --cov-branch --cov-report=term-missing --cov-fail-under=100

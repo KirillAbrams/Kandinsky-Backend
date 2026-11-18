@@ -1,0 +1,8 @@
+# Подменяет обработчик в проверочном окружении, чтобы воспроизвести потерю ответа.
+# Остальные службы запускаются обычным способом, как в полном сценарии.
+
+services:
+  worker:
+    volumes:
+      - ./backend/tests/feature/studio/retry_demo_worker.py:/app/retry_demo_worker.py:ro
+    command: [python, /app/retry_demo_worker.py]
