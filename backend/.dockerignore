@@ -1,0 +1,19 @@
+# Разрешает передать на сборку только файлы, которые нужны образу.
+# Так местные базы, настройки и временные файлы не попадут в образ.
+
+*
+!Dockerfile
+!requirements.lock
+!alembic.ini
+!app/
+!app/**
+!bootstrap/
+!bootstrap/**
+!config/
+!config/**
+!routes/
+!routes/**
+!database/
+!database/**
+**/__pycache__/
+**/*.py[cod]

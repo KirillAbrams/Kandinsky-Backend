@@ -1,0 +1,13 @@
+# Перечисляет библиотеки исполнителя на видеокарте.
+# Их ставят при подготовке машины, чтобы исполнитель мог прочитать веса и записать результат.
+
+torch==2.13.0
+torchvision==0.28.0
+diffusers==0.43.0
+transformers==5.22.2
+accelerate==1.15.0
+sentencepiece
+ftfy
+imageio[ffmpeg]
+fastapi==0.135.1
+uvicorn==0.42.0
